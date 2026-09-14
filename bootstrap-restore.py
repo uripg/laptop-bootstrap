@@ -37,6 +37,21 @@ def preserve(path, target, previous):
   shutil.move(str(path), str(dest))
 
 
+def reusable_clone(dest, project, target, state_dir):
+ marker = dest / '.git/uri-portable-restore.json'
+ if not marker.is_file() or dest.is_symlink(): return False
+ try:
+  owned = json.loads(marker.read_text())
+  sid = owned.get('snapshot', '')
+  if owned.get('path') != project['path'] or not re.fullmatch(r'[0-9a-f]{64}', sid): return False
+  prior = json.loads((state_dir.parent / sid / 'progress.json').read_text())
+  if prior.get('complete') or prior.get('target') != str(target): return False
+  if git(dest, 'rev-parse', 'HEAD').stdout.decode().strip() != project['commit']: return False
+  if git(dest, 'remote', 'get-url', 'origin').stdout.decode().strip() != 'https://github.com/' + project['repository'] + '.git': return False
+  return not git(dest, 'status', '--porcelain', '--untracked-files=all').stdout.strip()
+ except (ValueError, OSError): return False
+
+
 def apply_manifest(payload, target, state_dir, snapshot):
  manifest = json.loads((payload / 'manifest.json').read_text())
  if manifest.get('version') != 1: raise ValueError('Unsupported portable manifest version')
@@ -50,7 +65,7 @@ def apply_manifest(payload, target, state_dir, snapshot):
   # Inspect all destinations before claiming or writing any project directory.
   for project in projects:
    dest = checked_path(target, project['path'])
-   if dest.exists() or dest.is_symlink(): raise ValueError('Project already exists; use a fresh --home destination: ' + str(dest))
+   if (dest.exists() or dest.is_symlink()) and not reusable_clone(dest, project, target, state_dir): raise ValueError('Project already exists; use a fresh --home destination: ' + str(dest))
   record = {'snapshot': snapshot, 'target': str(target), 'cloned': [], 'complete': False}
   write_state(record_file, record)
  for name in manifest['files']:
@@ -66,7 +81,14 @@ if sys.argv[-1] == 'get' and fields.get('protocol') == 'https' and fields.get('h
  env = dict(os.environ, PORTABLE_TOKEN_PATH=str(payload / 'github-token'), GIT_TERMINAL_PROMPT='0')
  credential = '!' + shlex.quote(sys.executable) + ' ' + shlex.quote(str(helper))
  def run(path, *args, check=True):
-  return git(path, '-c', 'credential.helper=', '-c', 'credential.helper=' + credential, *args, env=env, check=check)
+  result = git(path, '-c', 'credential.helper=', '-c', 'credential.helper=' + credential, *args, env=env, check=False)
+  if check and result.returncode:
+   # Report the operation, never raw stderr or credential-bearing arguments.
+   detail = ''
+   if args[0] == 'fetch' and len(args) > 2 and args[1] == 'origin':
+    detail = ' Saved commit is unavailable on GitHub. Create a fresh portable backup on the Mac with the updated scripts.'
+   raise ValueError('Git ' + args[0] + ' failed for ' + name + ' (exit ' + str(result.returncode) + ').' + detail)
+  return result
  for index, project in enumerate(projects, 1):
   name = project['path']; dest = checked_path(target, name)
   repo = project['repository']; commit = project['commit']; branch = project['branch']
@@ -76,7 +98,7 @@ if sys.argv[-1] == 'get' and fields.get('protocol') == 'https' and fields.get('h
   marker = dest / '.git/uri-portable-restore.json'
   if name not in record['cloned'] and marker.is_file():
    owned = json.loads(marker.read_text())
-   if owned == {'snapshot': snapshot, 'path': name}:
+   if owned == {'snapshot': snapshot, 'path': name} or reusable_clone(dest, project, target, state_dir):
     record['cloned'].append(name); write_state(record_file, record)
   if name in record['cloned']:
    current = run(dest, 'rev-parse', 'HEAD').stdout.decode().strip()

@@ -34,7 +34,7 @@ bash bootstrap.sh --skip-apps
 bash bootstrap.sh --snapshot SNAPSHOT_ID
 ```
 
-Interrupted restores retain completed clones. Rerun with the same snapshot to resume. Existing unrelated project folders are refused rather than overwritten. Replaced settings are preserved under `~/.local/state/uri-portable/`. Mac-specific shell settings and Keychain data are retained as references rather than activated on Linux. A completed snapshot is not reapplied over later edits.
+Interrupted restores retain completed clones. Rerun with the same snapshot to resume. A newer repaired snapshot can also reuse clean clones from an incomplete restore when their repository and saved commit match. Edited or unrelated project folders are refused. Existing unrelated project folders are refused rather than overwritten. Replaced settings are preserved under `~/.local/state/uri-portable/`. Mac-specific shell settings and Keychain data are retained as references rather than activated on Linux. A completed snapshot is not reapplied over later edits.
 
 ## Public encrypted recovery file
 
